@@ -28,9 +28,9 @@ interface FlowEdge {
   label?: string;
 }
 interface FlowLane {
-    id: string;
-    label: string;
-    nodes: string[];
+  id: string;
+  label: string;
+  nodes: string[];
 }
 interface FlowData {
   nodes: FlowNode[];
@@ -40,7 +40,12 @@ interface FlowData {
 
 // Тип данных узла React Flow
 interface NodeData {
+  // React-нода для стандартного рендера
   label: React.ReactNode;
+  // Исходный редактируемый текст названия узла
+  text: string;
+  actor?: string;
+  isAction?: boolean;
   sourceSpan?: [number, number];
 }
 type RFNode = Node<NodeData>;
@@ -48,7 +53,7 @@ type RFNode = Node<NodeData>;
 // Константы конфигурации
 const API_URL = 'http://127.0.0.1:8000';
 const NODE_WIDTH = 180;
-const NODE_HEIGHT = 60; 
+const NODE_HEIGHT = 60;
 const COLOR_PRIMARY = '#2c3e50';
 const COLOR_SECONDARY = '#34495e';
 const COLOR_ACTION = '#f39c12';
@@ -62,12 +67,12 @@ const elk = new ELK();
 const getLayoutedElements = async (nodes: RFNode[], edges: Edge[]) => {
   const graph = {
     id: 'root',
-    layoutOptions: { 
-        'elk.algorithm': 'layered',
-        'elk.direction': 'DOWN',
-        'elk.spacing.nodeNode': '80',
-        'elk.layered.spacing.nodeNodeBetweenLayers': '100',
-        'elk.edgeRouting': 'ORTHOGONAL',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': 'DOWN',
+      'elk.spacing.nodeNode': '80',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+      'elk.edgeRouting': 'ORTHOGONAL',
     },
     children: nodes.map((node: RFNode) => ({ ...node, width: NODE_WIDTH, height: NODE_HEIGHT })),
     edges: edges.map((edge: Edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
@@ -86,7 +91,6 @@ const getLayoutedElements = async (nodes: RFNode[], edges: Edge[]) => {
     return { nodes, edges };
   }
 };
-
 
 // Кастомный компонент для узла
 interface CustomNodeContentProps {
@@ -112,6 +116,15 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  // Состояние контекстного меню
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    target: 'node' | 'edge';
+    id: string;
+  } | null>(null);
+
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: RFNode) => {
@@ -132,33 +145,45 @@ function App() {
 
       const reactFlowNodes: RFNode[] = data.nodes.map((node) => {
         const isAction = node.type === 'action' && Boolean(node.actor);
+        const labelText = node.label;
         return {
           id: node.id,
           type: 'default',
-          data: { 
-            label: <CustomNodeContent label={node.label} actor={node.actor} isAction={isAction} />,
-            sourceSpan: node.sourceSpan
+          data: {
+            // Рендерим визуал
+            label: <CustomNodeContent label={labelText} actor={node.actor} isAction={isAction} />,
+            // Храним исходный текст, чтобы редактировать
+            text: labelText,
+            actor: node.actor,
+            isAction,
+            sourceSpan: node.sourceSpan,
           },
           position: { x: 0, y: 0 },
           style: {
             backgroundColor: isAction ? COLOR_ACTION : COLOR_DECISION,
             borderColor: isAction ? COLOR_ACTION : COLOR_DECISION_BORDER,
             color: isAction ? '#ffffff' : COLOR_PRIMARY,
-            borderRadius: 8, width: NODE_WIDTH, textAlign: 'center', padding: 0,
+            borderRadius: 8,
+            width: NODE_WIDTH,
+            textAlign: 'center',
+            padding: 0,
           },
         };
       });
 
       const reactFlowEdges: Edge[] = data.edges.map((edge, i) => ({
         id: `e-${edge.from}-${edge.to}-${i}`,
-        source: edge.from, target: edge.to, label: edge.label,
-        type: 'smoothstep', animated: true,
+        source: edge.from,
+        target: edge.to,
+        label: edge.label,
+        type: 'smoothstep',
+        animated: true,
         markerEnd: { type: MarkerType.ArrowClosed, color: COLOR_SECONDARY },
         style: { stroke: COLOR_SECONDARY },
         labelBgStyle: { fill: '#fff', stroke: COLOR_DECISION_BORDER, fillOpacity: 0.7 },
         labelStyle: { fill: COLOR_PRIMARY },
       }));
-      
+
       const layoutResult = await getLayoutedElements(reactFlowNodes, reactFlowEdges);
       if (layoutResult) {
         setNodes(layoutResult.nodes);
@@ -189,7 +214,7 @@ function App() {
         },
       }))
     );
-    
+
     // Подсветка текста
     const selectedNode = nodes.find((n) => n.id === selectedNodeId);
     if (selectedNode?.data?.sourceSpan && textAreaRef.current) {
@@ -199,48 +224,185 @@ function App() {
     }
   }, [selectedNodeId, nodes, setNodes]);
 
+  // Контекстное меню — обработчики
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: RFNode) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, target: 'node', id: node.id });
+  }, []);
+
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, target: 'edge', id: edge.id });
+  }, []);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const handleEditFromContext = useCallback(() => {
+    if (!contextMenu || contextMenu.target !== 'node') return;
+    const node = nodes.find((n) => n.id === contextMenu.id);
+    if (!node) return;
+    const current = (node.data as NodeData).text ?? '';
+    const next = window.prompt('Введите новое название узла', current);
+    if (next != null) {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== contextMenu.id) return n;
+          const nd = n.data as NodeData;
+          const updatedData: NodeData = {
+            ...nd,
+            text: next,
+            label: <CustomNodeContent label={next} actor={nd.actor} isAction={!!nd.isAction} />,
+          };
+          return { ...n, data: updatedData };
+        })
+      );
+    }
+    setContextMenu(null);
+  }, [contextMenu, nodes, setNodes]);
+
+  const handleDeleteFromContext = useCallback(() => {
+    if (!contextMenu) return;
+    const { target, id } = contextMenu;
+    if (target === 'node') {
+      setNodes((nds) => nds.filter((n) => n.id !== id));
+      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+    } else {
+      setEdges((eds) => eds.filter((e) => e.id !== id));
+    }
+    setContextMenu(null);
+  }, [contextMenu, setNodes, setEdges]);
+
+  // Закрываем меню по клику в пустом месте/панели
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const menuItemStyle: React.CSSProperties = { padding: '8px 12px', cursor: 'pointer', userSelect: 'none' };
+
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'Inter, system-ui, Arial, sans-serif', backgroundColor: '#f0f0f0' }}>
       {/* Левая панель */}
-      <div style={{ width: '33.333%', height: '100%', padding: 16, borderRight: `1px solid ${COLOR_DECISION_BORDER}`, display: 'flex', flexDirection: 'column', boxSizing: 'border-box', backgroundColor: '#ffffff' }}>
+      <div
+        style={{
+          width: '33.333%',
+          height: '100%',
+          padding: 16,
+          borderRight: `1px solid ${COLOR_DECISION_BORDER}`,
+          display: 'flex',
+          flexDirection: 'column',
+          boxSizing: 'border-box',
+          backgroundColor: '#ffffff',
+        }}
+      >
         <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, color: COLOR_PRIMARY }}>Текст процесса</h2>
         <textarea
           ref={textAreaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Введите описание процесса..."
-          style={{ width: '100%', flex: 1, padding: 12, border: `1px solid ${COLOR_DECISION_BORDER}`, borderRadius: 8, resize: 'none', outline: 'none', boxSizing: 'border-box', backgroundColor: '#ffffff' }}
+          style={{
+            width: '100%',
+            flex: 1,
+            padding: 12,
+            border: `1px solid ${COLOR_DECISION_BORDER}`,
+            borderRadius: 8,
+            resize: 'none',
+            outline: 'none',
+            boxSizing: 'border-box',
+            backgroundColor: '#ffffff',
+          }}
         />
         <button
           onClick={processText}
           disabled={isLoading}
-          style={{ marginTop: 16, width: '100%', backgroundColor: COLOR_PRIMARY, color: '#ffffff', padding: '10px 16px', borderRadius: 8, border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.6 : 1 }}
+          style={{
+            marginTop: 16,
+            width: '100%',
+            backgroundColor: COLOR_PRIMARY,
+            color: '#ffffff',
+            padding: '10px 16px',
+            borderRadius: 8,
+            border: 'none',
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            opacity: isLoading ? 0.6 : 1,
+          }}
         >
           {isLoading ? 'Обработка...' : 'Построить схему'}
         </button>
-        {error && (<div style={{ marginTop: 8, color: 'red', fontSize: 14 }}>{error}</div>)}
+        {error && <div style={{ marginTop: 8, color: 'red', fontSize: 14 }}>{error}</div>}
         <div style={{ marginTop: 24, flexShrink: 0 }}>
           <h3 style={{ fontWeight: 700, color: COLOR_PRIMARY, marginBottom: 8 }}>Обозначения:</h3>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              <li style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ width: 16, height: 16, borderRadius: 4, marginRight: 8, backgroundColor: COLOR_ACTION }}></span>
-                <span style={{ color: COLOR_SECONDARY }}>Действие</span>
-              </li>
-              <li style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ width: 16, height: 16, borderRadius: 4, marginRight: 8, backgroundColor: COLOR_DECISION, border: `1px solid ${COLOR_DECISION_BORDER}` }}></span>
-                <span style={{ color: COLOR_SECONDARY }}>Решение / Другое</span>
-              </li>
+            <li style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ width: 16, height: 16, borderRadius: 4, marginRight: 8, backgroundColor: COLOR_ACTION }}></span>
+              <span style={{ color: COLOR_SECONDARY }}>Действие</span>
+            </li>
+            <li style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+              <span
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: 4,
+                  marginRight: 8,
+                  backgroundColor: COLOR_DECISION,
+                  border: `1px solid ${COLOR_DECISION_BORDER}`,
+                }}
+              ></span>
+              <span style={{ color: COLOR_SECONDARY }}>Решение / Другое</span>
+            </li>
           </ul>
         </div>
       </div>
+
       {/* Правая панель */}
-      <div style={{ width: '66.666%', height: '100%' }}>
+      <div style={{ width: '66.666%', height: '100%', position: 'relative' }}>
         <ReactFlowProvider>
-          <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} fitView onNodeClick={onNodeClick}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            fitView
+            onNodeClick={onNodeClick}
+            onNodeContextMenu={onNodeContextMenu}
+            onEdgeContextMenu={onEdgeContextMenu}
+            onPaneClick={closeContextMenu}
+          >
             <Background variant={'dots'} gap={24} size={1} />
             <Controls />
             <MiniMap />
           </ReactFlow>
+
+          {/* Контекстное меню */}
+          {contextMenu && (
+            <div
+              style={{
+                position: 'fixed',
+                top: contextMenu.y,
+                left: contextMenu.x,
+                background: '#fff',
+                border: '1px solid #ddd',
+                borderRadius: 8,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                zIndex: 1000,
+                overflow: 'hidden',
+                minWidth: 160,
+              }}
+            >
+              {contextMenu.target === 'node' && (
+                <div onClick={handleEditFromContext} style={menuItemStyle}>
+                  ✏️ Редактировать
+                </div>
+              )}
+              <div onClick={handleDeleteFromContext} style={{ ...menuItemStyle, color: '#c0392b' }}>
+                🗑 Удалить
+              </div>
+            </div>
+          )}
         </ReactFlowProvider>
       </div>
     </div>
