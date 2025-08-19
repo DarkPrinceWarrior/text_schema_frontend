@@ -13,6 +13,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
+import { toPng } from 'html-to-image';
 
 // --- Типы данных ---
 interface FlowNode {
@@ -59,6 +60,9 @@ const COLOR_SECONDARY = '#34495e';
 const COLOR_ACTION = '#f39c12';
 const COLOR_DECISION = '#ecf0f1';
 const COLOR_DECISION_BORDER = '#bdc3c7';
+const COLOR_SELECTED = '#e74c3c';
+const COLOR_TEXT_HIGHLIGHT = 'rgba(255, 243, 205, 0.6)';
+const COLOR_TEXT_HIGHLIGHT_BORDER = '#ffeaa7';
 const DEFAULT_TEXT =
   'Процесс начинается, когда клиент подает заявку. Система регистрирует заявку. Затем, специалист поддержки проверяет ее. Если заявка полная, специалист ее обрабатывает. Иначе, он связывается с клиентом для уточнений, после чего снова проверяет заявку.';
 
@@ -116,6 +120,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Состояние контекстного меню
   const [contextMenu, setContextMenu] = useState<{
@@ -126,12 +131,18 @@ function App() {
   } | null>(null);
 
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: RFNode) => {
     setSelectedNodeId(node.id);
   }, []);
 
   const processText = useCallback(async () => {
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      setError('Введите описание процесса для построения схемы');
+      return;
+    }
     setIsLoading(true);
     setError(null);
     try {
@@ -185,44 +196,45 @@ function App() {
       }));
 
       const layoutResult = await getLayoutedElements(reactFlowNodes, reactFlowEdges);
-      if (layoutResult) {
+      if (layoutResult && layoutResult.nodes.length > 0) {
         setNodes(layoutResult.nodes);
         setEdges(layoutResult.edges);
+      } else {
+        // Если раскладка не удалась, используем исходные данные
+        setNodes(reactFlowNodes);
+        setEdges(reactFlowEdges);
       }
     } catch (e) {
+      console.error('Ошибка при обработке текста:', e);
       setError('Не удалось получить или обработать схему. Убедитесь, что бэкенд-сервер запущен.');
     } finally {
       setIsLoading(false);
     }
   }, [text, setNodes, setEdges]);
 
-  // Запускаем обработку только один раз при первой загрузке
-  useEffect(() => {
-    void processText();
-  }, []); // Пустой массив зависимостей означает "выполнить один раз"
+  // Убираем автоматическое построение схемы при загрузке
+  // useEffect(() => {
+  //   void processText();
+  // }, []);
 
-  // Эффект для подсветки узла и текста
+  // Эффект для подсветки узла
   useEffect(() => {
-    // Подсветка узла
     setNodes((nds) =>
       nds.map((node) => ({
         ...node,
         style: {
           ...node.style,
-          boxShadow: node.id === selectedNodeId ? `0 0 0 3px ${COLOR_ACTION}` : 'none',
-          transition: 'box-shadow 0.2s ease-in-out',
+          boxShadow:
+            node.id === selectedNodeId
+              ? `0 0 0 3px ${COLOR_SELECTED}, 0 0 16px rgba(231, 76, 60, 0.22)`
+              : 'none',
+          transition: 'box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         },
       }))
     );
+  }, [selectedNodeId, setNodes]);
 
-    // Подсветка текста
-    const selectedNode = nodes.find((n) => n.id === selectedNodeId);
-    if (selectedNode?.data?.sourceSpan && textAreaRef.current) {
-      const [start, end] = selectedNode.data.sourceSpan;
-      textAreaRef.current.focus();
-      textAreaRef.current.setSelectionRange(start, end);
-    }
-  }, [selectedNodeId, nodes, setNodes]);
+  // Убрали нативное выделение текста через selectionRange, оставили только визуальную подсветку overlay
 
   // Контекстное меню — обработчики
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: RFNode) => {
@@ -243,7 +255,7 @@ function App() {
     if (!node) return;
     const current = (node.data as NodeData).text ?? '';
     const next = window.prompt('Введите новое название узла', current);
-    if (next != null) {
+    if (next != null && next !== current) {
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== contextMenu.id) return n;
@@ -283,6 +295,98 @@ function App() {
 
   const menuItemStyle: React.CSSProperties = { padding: '8px 12px', cursor: 'pointer', userSelect: 'none' };
 
+  // Поиск диапазона подсветки в тексте по тексту узла с учетом вариаций пробелов/регистра
+  const escapeRegex = useCallback((str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), []);
+
+  const findHighlightRange = useCallback(
+    (fullText: string, nodeText: string | undefined, hint?: [number, number] | undefined): [number, number] | null => {
+      if (!nodeText) return null;
+      const trimmed = nodeText.trim();
+      if (!trimmed) return null;
+
+      const searchInWindow = (startIdx: number, endIdx: number): [number, number] | null => {
+        const safeStart = Math.max(0, startIdx);
+        const safeEnd = Math.min(fullText.length, endIdx);
+        if (safeStart >= safeEnd) return null;
+        const windowText = fullText.slice(safeStart, safeEnd);
+        const escaped = escapeRegex(trimmed);
+        const pattern = escaped.replace(/\\s+/g, '\\s+');
+        const re = new RegExp(pattern, 'i');
+        const match = re.exec(windowText);
+        if (match && typeof match.index === 'number') {
+          const absStart = safeStart + match.index;
+          return [absStart, absStart + match[0].length];
+        }
+        return null;
+      };
+
+      // 1) Пытаемся найти рядом с подсказкой sourceSpan
+      if (hint) {
+        const [hs, he] = hint;
+        const r1 = searchInWindow(hs - 200, he + 200);
+        if (r1) return r1;
+      }
+
+      // 2) Пытаемся найти по всему тексту (регистронезависимо, гибко к пробелам)
+      const r2 = searchInWindow(0, fullText.length);
+      if (r2) return r2;
+
+      // 3) Жесткий поиск как запасной вариант
+      const exactPos = fullText.indexOf(trimmed);
+      if (exactPos >= 0) return [exactPos, exactPos + trimmed.length];
+      const lowerPos = fullText.toLowerCase().indexOf(trimmed.toLowerCase());
+      if (lowerPos >= 0) return [lowerPos, lowerPos + trimmed.length];
+
+      // 4) Возвращаем исходный hint, если есть
+      return hint ?? null;
+    },
+    [escapeRegex]
+  );
+
+  // Функция экспорта схемы в PNG
+  const exportToPng = useCallback(async () => {
+    if (!reactFlowWrapper.current || nodes.length === 0) return;
+    
+    setIsExporting(true);
+    setError(null); // Очищаем предыдущие ошибки
+    
+    try {
+      // Небольшая задержка для корректного рендеринга
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Находим элемент ReactFlow
+      const reactFlowElement = reactFlowWrapper.current.querySelector('.react-flow__viewport');
+      if (!reactFlowElement) {
+        throw new Error('Не найден элемент схемы');
+      }
+      
+      // Генерируем PNG напрямую из viewport
+      const dataUrl = await toPng(reactFlowElement as HTMLElement, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        skipAutoScale: true,
+        cacheBust: true,
+        filter: (node) => {
+          if (!node.classList) return true;
+          return !node.classList.contains('react-flow__controls') && 
+                 !node.classList.contains('react-flow__minimap') &&
+                 !node.classList.contains('react-flow__panel');
+        }
+      });
+      
+      // Создаем ссылку для скачивания
+      const link = document.createElement('a');
+      link.download = 'process-schema.png';
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error('Ошибка при экспорте:', error);
+      setError('Не удалось экспортировать схему. Попробуйте еще раз.');
+    } finally {
+      setIsExporting(false);
+    }
+  }, [nodes]);
+
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'Inter, system-ui, Arial, sans-serif', backgroundColor: '#f0f0f0' }}>
       {/* Левая панель */}
@@ -299,26 +403,82 @@ function App() {
         }}
       >
         <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, color: COLOR_PRIMARY }}>Текст процесса</h2>
-        <textarea
-          ref={textAreaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Введите описание процесса..."
-          style={{
-            width: '100%',
-            flex: 1,
-            padding: 12,
-            border: `1px solid ${COLOR_DECISION_BORDER}`,
-            borderRadius: 8,
-            resize: 'none',
-            outline: 'none',
-            boxSizing: 'border-box',
-            backgroundColor: '#ffffff',
-          }}
-        />
+        <div style={{ position: 'relative', flex: 1 }}>
+          <textarea
+            ref={textAreaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Введите описание процесса..."
+            style={{
+              width: '100%',
+              height: '100%',
+              padding: 12,
+              border: `2px solid ${COLOR_DECISION_BORDER}`,
+              borderRadius: 8,
+              resize: 'none',
+              outline: 'none',
+              boxSizing: 'border-box',
+              backgroundColor: '#ffffff',
+              fontSize: '14px',
+              lineHeight: '1.5',
+              fontFamily: 'inherit',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              pointerEvents: 'none',
+              padding: 12,
+              fontSize: '14px',
+              lineHeight: '1.5',
+              fontFamily: 'inherit',
+              whiteSpace: 'pre-wrap',
+              wordWrap: 'break-word',
+              overflow: 'hidden',
+              borderRadius: 8,
+            }}
+          >
+            {selectedNodeId && (() => {
+              const selectedNode = nodes.find((n) => n.id === selectedNodeId);
+              const nodeText = (selectedNode?.data as any)?.text as string | undefined;
+              const matchRange = findHighlightRange(text, nodeText, (selectedNode?.data as any)?.sourceSpan);
+              if (matchRange) {
+                const [start, end] = matchRange;
+                const before = text.substring(0, start);
+                const highlighted = text.substring(start, end);
+                const after = text.substring(end);
+                return (
+                  <>
+                    <span style={{ color: 'transparent' }}>{before}</span>
+                    <span
+                      style={{
+                        backgroundColor: COLOR_TEXT_HIGHLIGHT,
+                        border: `1px solid ${COLOR_TEXT_HIGHLIGHT_BORDER}`,
+                        borderRadius: '4px',
+                        padding: '2px 3px',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                        color: 'transparent',
+                        outline: `2px solid ${COLOR_SELECTED}`,
+                        outlineOffset: '1px',
+                      }}
+                    >
+                      {highlighted}
+                    </span>
+                    <span style={{ color: 'transparent' }}>{after}</span>
+                  </>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        </div>
         <button
           onClick={processText}
-          disabled={isLoading}
+          disabled={isLoading || !text.trim()}
           style={{
             marginTop: 16,
             width: '100%',
@@ -327,11 +487,28 @@ function App() {
             padding: '10px 16px',
             borderRadius: 8,
             border: 'none',
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-            opacity: isLoading ? 0.6 : 1,
+            cursor: (isLoading || !text.trim()) ? 'not-allowed' : 'pointer',
+            opacity: (isLoading || !text.trim()) ? 0.6 : 1,
           }}
         >
           {isLoading ? 'Обработка...' : 'Построить схему'}
+        </button>
+        <button
+          onClick={exportToPng}
+          disabled={isExporting || nodes.length === 0}
+          style={{
+            marginTop: 8,
+            width: '100%',
+            backgroundColor: COLOR_ACTION,
+            color: '#ffffff',
+            padding: '10px 16px',
+            borderRadius: 8,
+            border: 'none',
+            cursor: (isExporting || nodes.length === 0) ? 'not-allowed' : 'pointer',
+            opacity: (isExporting || nodes.length === 0) ? 0.6 : 1,
+          }}
+        >
+          {isExporting ? 'Экспорт...' : 'Экспорт в PNG'}
         </button>
         {error && <div style={{ marginTop: 8, color: 'red', fontSize: 14 }}>{error}</div>}
         <div style={{ marginTop: 24, flexShrink: 0 }}>
@@ -359,7 +536,7 @@ function App() {
       </div>
 
       {/* Правая панель */}
-      <div style={{ width: '66.666%', height: '100%', position: 'relative' }}>
+      <div ref={reactFlowWrapper} style={{ width: '66.666%', height: '100%', position: 'relative' }}>
         <ReactFlowProvider>
           <ReactFlow
             nodes={nodes}
@@ -372,7 +549,7 @@ function App() {
             onEdgeContextMenu={onEdgeContextMenu}
             onPaneClick={closeContextMenu}
           >
-            <Background variant={'dots'} gap={24} size={1} />
+            <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
             <Controls />
             <MiniMap />
           </ReactFlow>
