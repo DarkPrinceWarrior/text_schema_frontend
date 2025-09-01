@@ -263,8 +263,8 @@ function App() {
 
   // Эффект для подсветки узла
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => ({
+    setNodes((nds: RFNode[]) =>
+      nds.map((node: RFNode) => ({
         ...node,
         style: {
           ...node.style,
@@ -311,13 +311,13 @@ function App() {
 
   const handleEditFromContext = useCallback(() => {
     if (!contextMenu || contextMenu.target !== "node") return;
-    const node = nodes.find((n) => n.id === contextMenu.id);
+    const node = nodes.find((n: RFNode) => n.id === contextMenu.id);
     if (!node) return;
     const current = (node.data as NodeData).text ?? "";
     const next = window.prompt("Введите новое название узла", current);
     if (next != null && next !== current) {
-      setNodes((nds) =>
-        nds.map((n) => {
+      setNodes((nds: RFNode[]) =>
+        nds.map((n: RFNode) => {
           if (n.id !== contextMenu.id) return n;
           const nd = n.data as NodeData;
           const updatedData: NodeData = {
@@ -342,10 +342,12 @@ function App() {
     if (!contextMenu) return;
     const { target, id } = contextMenu;
     if (target === "node") {
-      setNodes((nds) => nds.filter((n) => n.id !== id));
-      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setNodes((nds: RFNode[]) => nds.filter((n: RFNode) => n.id !== id));
+      setEdges((eds: Edge[]) =>
+        eds.filter((e: Edge) => e.source !== id && e.target !== id)
+      );
     } else {
-      setEdges((eds) => eds.filter((e) => e.id !== id));
+      setEdges((eds: Edge[]) => eds.filter((e: Edge) => e.id !== id));
     }
     setContextMenu(null);
   }, [contextMenu, setNodes, setEdges]);
@@ -507,7 +509,9 @@ function App() {
           <textarea
             ref={textAreaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+              setText(e.target.value)
+            }
             placeholder="Введите описание процесса..."
             style={{
               width: "100%",
