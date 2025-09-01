@@ -31,3 +31,30 @@ Thumbs.db
 
 # Tests / Coverage
 coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# TypeScript
+*.tsbuildinfo
+
+# Storybook
+storybook-static/
+
+# Local development
+.local/
+
+# Backup files
+*.bak
+*.backup
