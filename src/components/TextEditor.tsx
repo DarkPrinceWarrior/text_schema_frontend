@@ -20,6 +20,7 @@ interface TextEditorProps {
     fullText: string,
     nodeText: string | undefined
   ) => [number, number] | null;
+  modelSelector: React.ReactNode;
   exportPanel: React.ReactNode;
 }
 
@@ -37,6 +38,7 @@ export const TextEditor: React.FC<TextEditorProps> = ({
   selectedNodeId,
   nodes,
   findHighlightRange,
+  modelSelector,
   exportPanel,
 }) => {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -175,6 +177,19 @@ export const TextEditor: React.FC<TextEditorProps> = ({
           {isLoading ? "Обработка..." : "Построить схему"}
         </button>
         {exportPanel}
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <h3
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            marginBottom: 8,
+            color: COLOR_PRIMARY,
+          }}
+        >
+          Модель ИИ
+        </h3>
+        {modelSelector}
       </div>
       <style>
         {`

@@ -14,6 +14,7 @@ import Fuse from "fuse.js";
 import { FlowDiagram } from "./components/FlowDiagram";
 import { TextEditor } from "./components/TextEditor";
 import { ExportPanel } from "./components/ExportPanel";
+import { ModelSelector } from "./components/ModelSelector";
 
 import { Legend } from "./components/Legend";
 import { CustomNodeContent } from "./components/CustomNodeContent";
@@ -84,6 +85,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("");
 
   // Состояние контекстного меню
   const [contextMenu, setContextMenu] = useState<{
@@ -105,13 +107,17 @@ function App() {
       setError("Введите описание процесса для построения схемы");
       return;
     }
+    if (!selectedModel) {
+      setError("Выберите модель для обработки текста");
+      return;
+    }
     setIsLoading(true);
     setError(null);
     try {
       const response = await fetch(`${API_URL}/process-text`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model: selectedModel }),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data: FlowData = await response.json();
@@ -187,7 +193,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [text, setNodes, setEdges]);
+  }, [text, selectedModel, setNodes, setEdges]);
 
   // Убираем автоматическое построение схемы при загрузке
   // useEffect(() => {
@@ -366,6 +372,16 @@ function App() {
           selectedNodeId={selectedNodeId}
           nodes={nodes}
           findHighlightRange={findHighlightRange}
+          modelSelector={
+            <ModelSelector
+              selectedModel={selectedModel}
+              onModelChange={(modelId) => {
+                setSelectedModel(modelId);
+                setError(null); // Убираем ошибку при выборе модели
+              }}
+              isLoading={isLoading}
+            />
+          }
           exportPanel={
             <ExportPanel
               nodes={nodes}
