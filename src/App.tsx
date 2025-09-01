@@ -8,6 +8,7 @@ import {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
+import Fuse from "fuse.js";
 
 // Компоненты
 import { FlowDiagram } from "./components/FlowDiagram";
@@ -293,62 +294,45 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // Поиск диапазона подсветки в тексте по тексту узла с учетом вариаций пробелов/регистра
-  const escapeRegex = useCallback(
-    (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-    []
-  );
-
   const findHighlightRange = useCallback(
     (
       fullText: string,
-      nodeText: string | undefined,
-      hint?: [number, number] | undefined
+      nodeText: string | undefined
     ): [number, number] | null => {
-      if (!nodeText) return null;
-      const trimmed = nodeText.trim();
-      if (!trimmed) return null;
+      if (!nodeText?.trim()) return null;
 
-      const searchInWindow = (
-        startIdx: number,
-        endIdx: number
-      ): [number, number] | null => {
-        const safeStart = Math.max(0, startIdx);
-        const safeEnd = Math.min(fullText.length, endIdx);
-        if (safeStart >= safeEnd) return null;
-        const windowText = fullText.slice(safeStart, safeEnd);
-        const escaped = escapeRegex(trimmed);
-        const pattern = escaped.replace(/\\s+/g, "\\s+");
-        const re = new RegExp(pattern, "i");
-        const match = re.exec(windowText);
-        if (match && typeof match.index === "number") {
-          const absStart = safeStart + match.index;
-          return [absStart, absStart + match[0].length];
-        }
-        return null;
-      };
+      const sentences = fullText
+        .split(/[.!?]+/)
+        .filter((s) => s.trim().length > 0)
+        .map((sentence) => {
+          const trimmed = sentence.trim();
+          const startPos = fullText.indexOf(trimmed);
+          return {
+            text: trimmed,
+            startPos,
+            endPos: startPos + trimmed.length,
+          };
+        });
 
-      // 1) Пытаемся найти рядом с подсказкой sourceSpan
-      if (hint) {
-        const [hs, he] = hint;
-        const r1 = searchInWindow(hs - 200, he + 200);
-        if (r1) return r1;
+      if (sentences.length === 0) return null;
+
+      const fuse = new Fuse(sentences, {
+        keys: ["text"],
+        includeScore: true,
+        threshold: 0.8,
+        ignoreLocation: true,
+        minMatchCharLength: 2,
+      });
+
+      const results = fuse.search(nodeText.trim());
+
+      if (results.length > 0 && 1 - (results[0].score || 1) > 0.2) {
+        return [results[0].item.startPos, results[0].item.endPos];
       }
 
-      // 2) Пытаемся найти по всему тексту (регистронезависимо, гибко к пробелам)
-      const r2 = searchInWindow(0, fullText.length);
-      if (r2) return r2;
-
-      // 3) Жесткий поиск как запасной вариант
-      const exactPos = fullText.indexOf(trimmed);
-      if (exactPos >= 0) return [exactPos, exactPos + trimmed.length];
-      const lowerPos = fullText.toLowerCase().indexOf(trimmed.toLowerCase());
-      if (lowerPos >= 0) return [lowerPos, lowerPos + trimmed.length];
-
-      // 4) Возвращаем исходный hint, если есть
-      return hint ?? null;
+      return null;
     },
-    [escapeRegex]
+    []
   );
 
   return (

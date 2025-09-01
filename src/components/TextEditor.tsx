@@ -18,8 +18,7 @@ interface TextEditorProps {
   nodes: Node<NodeData>[];
   findHighlightRange: (
     fullText: string,
-    nodeText: string | undefined,
-    hint?: [number, number] | undefined
+    nodeText: string | undefined
   ) => [number, number] | null;
   exportPanel: React.ReactNode;
 }
@@ -111,11 +110,7 @@ export const TextEditor: React.FC<TextEditorProps> = ({
               const nodeText = (selectedNode?.data as any)?.text as
                 | string
                 | undefined;
-              const matchRange = findHighlightRange(
-                text,
-                nodeText,
-                (selectedNode?.data as any)?.sourceSpan
-              );
+              const matchRange = findHighlightRange(text, nodeText);
               if (matchRange) {
                 const [start, end] = matchRange;
                 const before = text.substring(0, start);
