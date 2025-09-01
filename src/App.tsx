@@ -1,54 +1,25 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import ReactFlow, {
-  ReactFlowProvider,
+import {
   useNodesState,
   useEdgesState,
-  Controls,
-  Background,
-  MiniMap,
-  BackgroundVariant,
   MarkerType,
   type Node,
   type Edge,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
-import { toPng } from "html-to-image";
 
-// --- Типы данных ---
-interface FlowNode {
-  id: string;
-  label: string;
-  type?: string;
-  actor?: string;
-  sourceSpan?: [number, number];
-}
-interface FlowEdge {
-  from: string;
-  to: string;
-  label?: string;
-}
-interface FlowLane {
-  id: string;
-  label: string;
-  nodes: string[];
-}
-interface FlowData {
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-  lanes?: FlowLane[];
-}
+// Компоненты
+import { FlowDiagram } from "./components/FlowDiagram";
+import { TextEditor } from "./components/TextEditor";
+import { ExportPanel } from "./components/ExportPanel";
 
-// Тип данных узла React Flow
-interface NodeData {
-  // React-нода для стандартного рендера
-  label: React.ReactNode;
-  // Исходный редактируемый текст названия узла
-  text: string;
-  actor?: string;
-  isAction?: boolean;
-  sourceSpan?: [number, number];
-}
+import { Legend } from "./components/Legend";
+import { CustomNodeContent } from "./components/CustomNodeContent";
+
+// Типы
+import type { FlowData, NodeData } from "./types";
+
 type RFNode = Node<NodeData>;
 
 // Константы конфигурации
@@ -104,44 +75,6 @@ const getLayoutedElements = async (nodes: RFNode[], edges: Edge[]) => {
   }
 };
 
-// Кастомный компонент для узла
-interface CustomNodeContentProps {
-  label: string;
-  actor?: string;
-  isAction: boolean;
-}
-const CustomNodeContent: React.FC<CustomNodeContentProps> = ({
-  label,
-  actor,
-  isAction,
-}) => (
-  <div
-    style={{
-      padding: "5px",
-      height: "100%",
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "center",
-    }}
-  >
-    <div style={{ fontWeight: "bold", marginBottom: actor ? "4px" : "0" }}>
-      {label}
-    </div>
-    {actor && (
-      <div
-        style={{
-          fontSize: "12px",
-          color: isAction ? "#ffffff" : COLOR_SECONDARY,
-          fontStyle: "italic",
-          opacity: 0.9,
-        }}
-      >
-        {actor}
-      </div>
-    )}
-  </div>
-);
-
 function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge[]>([]);
@@ -149,7 +82,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
 
   // Состояние контекстного меню
   const [contextMenu, setContextMenu] = useState<{
@@ -159,7 +92,6 @@ function App() {
     id: string;
   } | null>(null);
 
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: RFNode) => {
@@ -310,7 +242,7 @@ function App() {
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const handleEditFromContext = useCallback(() => {
-    if (!contextMenu || contextMenu.target !== "node") return;
+    if (!contextMenu || contextMenu.target !== "node" || !isEditMode) return;
     const node = nodes.find((n: RFNode) => n.id === contextMenu.id);
     if (!node) return;
     const current = (node.data as NodeData).text ?? "";
@@ -336,10 +268,10 @@ function App() {
       );
     }
     setContextMenu(null);
-  }, [contextMenu, nodes, setNodes]);
+  }, [contextMenu, nodes, setNodes, isEditMode]);
 
   const handleDeleteFromContext = useCallback(() => {
-    if (!contextMenu) return;
+    if (!contextMenu || !isEditMode) return;
     const { target, id } = contextMenu;
     if (target === "node") {
       setNodes((nds: RFNode[]) => nds.filter((n: RFNode) => n.id !== id));
@@ -350,7 +282,7 @@ function App() {
       setEdges((eds: Edge[]) => eds.filter((e: Edge) => e.id !== id));
     }
     setContextMenu(null);
-  }, [contextMenu, setNodes, setEdges]);
+  }, [contextMenu, setNodes, setEdges, isEditMode]);
 
   // Закрываем меню по клику в пустом месте/панели
   useEffect(() => {
@@ -360,12 +292,6 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  const menuItemStyle: React.CSSProperties = {
-    padding: "8px 12px",
-    cursor: "pointer",
-    userSelect: "none",
-  };
 
   // Поиск диапазона подсветки в тексте по тексту узла с учетом вариаций пробелов/регистра
   const escapeRegex = useCallback(
@@ -425,60 +351,13 @@ function App() {
     [escapeRegex]
   );
 
-  // Функция экспорта схемы в PNG
-  const exportToPng = useCallback(async () => {
-    if (!reactFlowWrapper.current || nodes.length === 0) return;
-
-    setIsExporting(true);
-    setError(null); // Очищаем предыдущие ошибки
-
-    try {
-      // Небольшая задержка для корректного рендеринга
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Находим элемент ReactFlow
-      const reactFlowElement = reactFlowWrapper.current.querySelector(
-        ".react-flow__viewport"
-      );
-      if (!reactFlowElement) {
-        throw new Error("Не найден элемент схемы");
-      }
-
-      // Генерируем PNG напрямую из viewport
-      const dataUrl = await toPng(reactFlowElement as HTMLElement, {
-        backgroundColor: "#ffffff",
-        pixelRatio: 2,
-        skipAutoScale: true,
-        cacheBust: true,
-        filter: (node) => {
-          if (!node.classList) return true;
-          return (
-            !node.classList.contains("react-flow__controls") &&
-            !node.classList.contains("react-flow__minimap") &&
-            !node.classList.contains("react-flow__panel")
-          );
-        },
-      });
-
-      // Создаем ссылку для скачивания
-      const link = document.createElement("a");
-      link.download = "process-schema.png";
-      link.href = dataUrl;
-      link.click();
-    } catch (error) {
-      console.error("Ошибка при экспорте:", error);
-      setError("Не удалось экспортировать схему. Попробуйте еще раз.");
-    } finally {
-      setIsExporting(false);
-    }
-  }, [nodes]);
-
   return (
     <div
       style={{
         display: "flex",
         height: "100vh",
-        fontFamily: "Inter, system-ui, Arial, sans-serif",
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
         backgroundColor: "#f0f0f0",
       }}
     >
@@ -495,176 +374,31 @@ function App() {
           backgroundColor: "#ffffff",
         }}
       >
-        <h2
-          style={{
-            fontSize: 20,
-            fontWeight: 700,
-            marginBottom: 16,
-            color: COLOR_PRIMARY,
-          }}
-        >
-          Текст процесса
-        </h2>
-        <div style={{ position: "relative", flex: 1 }}>
-          <textarea
-            ref={textAreaRef}
-            value={text}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-              setText(e.target.value)
-            }
-            placeholder="Введите описание процесса..."
-            style={{
-              width: "100%",
-              height: "100%",
-              padding: 12,
-              border: `2px solid ${COLOR_DECISION_BORDER}`,
-              borderRadius: 8,
-              resize: "none",
-              outline: "none",
-              boxSizing: "border-box",
-              backgroundColor: "#ffffff",
-              fontSize: "14px",
-              lineHeight: "1.5",
-              fontFamily: "inherit",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              pointerEvents: "none",
-              padding: 12,
-              fontSize: "14px",
-              lineHeight: "1.5",
-              fontFamily: "inherit",
-              whiteSpace: "pre-wrap",
-              wordWrap: "break-word",
-              overflow: "hidden",
-              borderRadius: 8,
-            }}
-          >
-            {selectedNodeId &&
-              (() => {
-                const selectedNode = nodes.find((n) => n.id === selectedNodeId);
-                const nodeText = (selectedNode?.data as any)?.text as
-                  | string
-                  | undefined;
-                const matchRange = findHighlightRange(
-                  text,
-                  nodeText,
-                  (selectedNode?.data as any)?.sourceSpan
-                );
-                if (matchRange) {
-                  const [start, end] = matchRange;
-                  const before = text.substring(0, start);
-                  const highlighted = text.substring(start, end);
-                  const after = text.substring(end);
-                  return (
-                    <>
-                      <span style={{ color: "transparent" }}>{before}</span>
-                      <span
-                        style={{
-                          backgroundColor: COLOR_TEXT_HIGHLIGHT,
-                          border: `1px solid ${COLOR_TEXT_HIGHLIGHT_BORDER}`,
-                          borderRadius: "4px",
-                          padding: "2px 3px",
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-                          color: "transparent",
-                          outline: `2px solid ${COLOR_SELECTED}`,
-                          outlineOffset: "1px",
-                        }}
-                      >
-                        {highlighted}
-                      </span>
-                      <span style={{ color: "transparent" }}>{after}</span>
-                    </>
-                  );
-                }
-                return null;
-              })()}
-          </div>
-        </div>
-        <button
-          onClick={processText}
-          disabled={isLoading || !text.trim()}
-          style={{
-            marginTop: 16,
-            width: "100%",
-            backgroundColor: COLOR_PRIMARY,
-            color: "#ffffff",
-            padding: "10px 16px",
-            borderRadius: 8,
-            border: "none",
-            cursor: isLoading || !text.trim() ? "not-allowed" : "pointer",
-            opacity: isLoading || !text.trim() ? 0.6 : 1,
-          }}
-        >
-          {isLoading ? "Обработка..." : "Построить схему"}
-        </button>
-        <button
-          onClick={exportToPng}
-          disabled={isExporting || nodes.length === 0}
-          style={{
-            marginTop: 8,
-            width: "100%",
-            backgroundColor: COLOR_ACTION,
-            color: "#ffffff",
-            padding: "10px 16px",
-            borderRadius: 8,
-            border: "none",
-            cursor:
-              isExporting || nodes.length === 0 ? "not-allowed" : "pointer",
-            opacity: isExporting || nodes.length === 0 ? 0.6 : 1,
-          }}
-        >
-          {isExporting ? "Экспорт..." : "Экспорт в PNG"}
-        </button>
+        <TextEditor
+          text={text}
+          setText={setText}
+          onProcessText={processText}
+          isLoading={isLoading}
+          selectedNodeId={selectedNodeId}
+          nodes={nodes}
+          findHighlightRange={findHighlightRange}
+          exportPanel={
+            <ExportPanel
+              nodes={nodes}
+              edges={edges}
+              reactFlowWrapper={reactFlowWrapper}
+              setError={setError}
+            />
+          }
+        />
+
         {error && (
           <div style={{ marginTop: 8, color: "red", fontSize: 14 }}>
             {error}
           </div>
         )}
-        <div style={{ marginTop: 24, flexShrink: 0 }}>
-          <h3
-            style={{ fontWeight: 700, color: COLOR_PRIMARY, marginBottom: 8 }}
-          >
-            Обозначения:
-          </h3>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            <li
-              style={{ display: "flex", alignItems: "center", marginBottom: 4 }}
-            >
-              <span
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  marginRight: 8,
-                  backgroundColor: COLOR_ACTION,
-                }}
-              ></span>
-              <span style={{ color: COLOR_SECONDARY }}>Действие</span>
-            </li>
-            <li
-              style={{ display: "flex", alignItems: "center", marginBottom: 4 }}
-            >
-              <span
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  marginRight: 8,
-                  backgroundColor: COLOR_DECISION,
-                  border: `1px solid ${COLOR_DECISION_BORDER}`,
-                }}
-              ></span>
-              <span style={{ color: COLOR_SECONDARY }}>Решение / Другое</span>
-            </li>
-          </ul>
-        </div>
+
+        <Legend />
       </div>
 
       {/* Правая панель */}
@@ -672,53 +406,21 @@ function App() {
         ref={reactFlowWrapper}
         style={{ width: "66.666%", height: "100%", position: "relative" }}
       >
-        <ReactFlowProvider>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            fitView
-            onNodeClick={onNodeClick}
-            onNodeContextMenu={onNodeContextMenu}
-            onEdgeContextMenu={onEdgeContextMenu}
-            onPaneClick={closeContextMenu}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
-
-          {/* Контекстное меню */}
-          {contextMenu && (
-            <div
-              style={{
-                position: "fixed",
-                top: contextMenu.y,
-                left: contextMenu.x,
-                background: "#fff",
-                border: "1px solid #ddd",
-                borderRadius: 8,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                zIndex: 1000,
-                overflow: "hidden",
-                minWidth: 160,
-              }}
-            >
-              {contextMenu.target === "node" && (
-                <div onClick={handleEditFromContext} style={menuItemStyle}>
-                  ✏️ Редактировать
-                </div>
-              )}
-              <div
-                onClick={handleDeleteFromContext}
-                style={{ ...menuItemStyle, color: "#c0392b" }}
-              >
-                🗑 Удалить
-              </div>
-            </div>
-          )}
-        </ReactFlowProvider>
+        <FlowDiagram
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          onNodeContextMenu={onNodeContextMenu}
+          onEdgeContextMenu={onEdgeContextMenu}
+          onPaneClick={closeContextMenu}
+          contextMenu={contextMenu}
+          onEditFromContext={handleEditFromContext}
+          onDeleteFromContext={handleDeleteFromContext}
+          isEditMode={isEditMode}
+          onToggleEditMode={setIsEditMode}
+        />
       </div>
     </div>
   );
