@@ -98,7 +98,7 @@ export const TextEditor: React.FC<TextEditorProps> = ({
             pointerEvents: "none",
             padding: 12,
             fontSize: "14px",
-            lineHeight: "1.5",
+            lineHeight: "1.6",
             fontFamily: "inherit",
             whiteSpace: "pre-wrap",
             wordWrap: "break-word",

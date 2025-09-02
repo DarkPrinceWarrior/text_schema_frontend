@@ -34,8 +34,6 @@ const COLOR_ACTION = "#f39c12";
 const COLOR_DECISION = "#ecf0f1";
 const COLOR_DECISION_BORDER = "#bdc3c7";
 const COLOR_SELECTED = "#e74c3c";
-const COLOR_TEXT_HIGHLIGHT = "rgba(255, 243, 205, 0.6)";
-const COLOR_TEXT_HIGHLIGHT_BORDER = "#ffeaa7";
 const DEFAULT_TEXT =
   "Процесс начинается, когда клиент подает заявку. Система регистрирует заявку. Затем, специалист поддержки проверяет ее. Если заявка полная, специалист ее обрабатывает. Иначе, он связывается с клиентом для уточнений, после чего снова проверяет заявку.";
 
